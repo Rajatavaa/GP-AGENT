@@ -1,0 +1,15 @@
+[project]
+name = "fun-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-api-python-client>=2.193.0",
+    "google-auth-httplib2>=0.3.0",
+    "google-auth-oauthlib>=1.3.0",
+    "langchain-community>=0.4.1",
+    "langchain[openai]>=1.2.13",
+    "langgraph>=1.1.3",
+    "slack-sdk>=3.41.0",
+]
