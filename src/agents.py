@@ -1,23 +1,20 @@
-from langchain.agents import create_agent
+import json
+import re
 from langchain_core.messages import HumanMessage
-from langchain_core.utils.function_calling import convert_to_openai_function
 
 
 def start_agent(llm, tools):
+    """Creates an agent with the given LLM and tools.
+    If no tools, returns a plain chat agent.
+    """
     if not tools:
-        return create_agent(llm, tools)
+        return llm
 
-    functions = [convert_to_openai_function(t) for t in tools]
-
-    # Force tool usage for models that don't auto-call tools
-    tool_choice = {"type": "function", "function": {"name": tools[0].name}}
-
-    llm_with_tools = llm.bind(functions=functions, tool_choice=tool_choice)
-    agent = create_agent(llm_with_tools, tools)
-    return agent
+    return llm.bind_tools(tools)
 
 
 def agent_node(state, agent):
+    """Generic agent node that invokes the agent and extracts output."""
     user_input = state.get("input", " ")
     result = agent.invoke({"messages": [HumanMessage(content=user_input)]})
     output = (
@@ -28,63 +25,112 @@ def agent_node(state, agent):
     return {**state, "output": output}
 
 
-def slack_agent(state, llm, tools):
-    "Agent specialized for slack"
+def _execute_tool_calls(response, tools, state, success_prefix):
+    """Execute any tool calls found in the response."""
+    tool_calls = getattr(response, "tool_calls", None) or []
 
+    if not tool_calls and hasattr(response, "additional_kwargs"):
+        extra = response.additional_kwargs
+        if "tool_calls" in extra:
+            tool_calls = extra["tool_calls"]
+
+    if not tool_calls:
+        return None
+
+    for tool_call in tool_calls:
+        if isinstance(tool_call, dict):
+            if "function" in tool_call:
+                func = tool_call["function"]
+                tool_name = func.get("name", "")
+                try:
+                    tool_args = json.loads(func.get("arguments", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    tool_args = func.get("arguments", {})
+            else:
+                tool_name = tool_call.get("name", "")
+                tool_args = tool_call.get("args", {})
+        else:
+            tool_name = getattr(tool_call, "name", "")
+            tool_args = getattr(tool_call, "args", {})
+
+        print(f"[DEBUG] Tool: {tool_name}")
+        print(f"[DEBUG] Args: {json.dumps(tool_args, indent=2)}")
+
+        for tool in tools:
+            if tool.name == tool_name:
+                tool_result = tool.invoke(tool_args)
+                return {**state, "output": f"{success_prefix} {tool_result}"}
+
+    return None
+
+
+def slack_agent(state, llm, tools):
+    """Agent specialized for Slack operations."""
     user_input = state.get("input", " ")
 
-    functions = [convert_to_openai_function(t) for t in tools]
     tool_choice = {"type": "function", "function": {"name": tools[0].name}}
+    agent = llm.bind_tools(tools, tool_choice=tool_choice)
+    response = agent.invoke([HumanMessage(content=user_input)])
 
-    llm_with_tools = llm.bind(functions=functions, tool_choice=tool_choice)
-    response = llm_with_tools.invoke(user_input)
-
-    if hasattr(response, "tool_calls") and response.tool_calls:
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            for tool in tools:
-                if tool.name == tool_name:
-                    tool_result = tool.invoke(tool_args)
-                    return {**state, "output": f"Slack message sent! {tool_result}"}
+    result = _execute_tool_calls(response, tools, state, "Slack action completed!")
+    if result:
+        return result
 
     output = response.content if hasattr(response, "content") else str(response)
     return {**state, "output": output}
 
 
 def email_agent(state, llm, tools):
-    "Agent specialized for email"
-    from langchain_core.utils.function_calling import convert_to_openai_function
-
+    """Agent specialized for email operations.
+    Extracts email body via LLM, then constructs and executes tool call manually.
+    """
     user_input = state.get("input", " ")
 
-    functions = [convert_to_openai_function(t) for t in tools]
-    tool_choice = {"type": "function", "function": {"name": tools[0].name}}
+    email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
+    to_email = email_match.group(0) if email_match else ""
 
-    llm_with_tools = llm.bind(functions=functions, tool_choice=tool_choice)
-    response = llm_with_tools.invoke(user_input)
+    saying_match = re.search(r"saying\s+(.+)", user_input, re.IGNORECASE)
+    body = saying_match.group(1).strip() if saying_match else user_input
 
-    if hasattr(response, "tool_calls") and response.tool_calls:
-        for tool_call in response.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            for tool in tools:
-                if tool.name == tool_name:
-                    tool_result = tool.invoke(tool_args)
-                    return {
-                        **state,
-                        "output": f"Email sent successfully! {tool_result}",
-                    }
+    subject_match = re.search(
+        r"(?:about|regarding|on)\s+(.+?)(?:\s+saying|\s*$)", user_input, re.IGNORECASE
+    )
+    if subject_match:
+        subject = subject_match.group(1).strip()
+    else:
+        words = body.split()[:6]
+        subject = " ".join(words) if words else "Email"
 
-    output = response.content if hasattr(response, "content") else str(response)
-    return {**state, "output": output}
+    print(f"[DEBUG] Extracted email fields:")
+    print(f"[DEBUG]   to: {to_email}")
+    print(f"[DEBUG]   subject: {subject}")
+    print(f"[DEBUG]   body: {body}")
+
+    email_tool = None
+    for tool in tools:
+        if tool.name == "send_gmail_message":
+            email_tool = tool
+            break
+
+    if not email_tool:
+        return {**state, "output": "Email tool not found"}
+
+    if not to_email:
+        return {**state, "output": "Could not find recipient email address"}
+
+    tool_result = email_tool.invoke(
+        {
+            "to": to_email,
+            "subject": subject,
+            "message": body,
+        }
+    )
+
+    return {**state, "output": f"Email sent successfully! {tool_result}"}
 
 
-# This is the fallback if the previous agent nodes fails
 def general_agent_node(state, agent):
-    """
-    Fallback agent
-    """
+    """Fallback agent for general queries."""
     user_input = state.get("input", "")
 
     result = agent.invoke(
@@ -102,13 +148,11 @@ def general_agent_node(state, agent):
         if result.get("messages")
         else str(result)
     )
-    return {
-        **state,
-        "output": output,
-    }
+    return {**state, "output": output}
 
 
 def router(state, llm):
+    """Routes the user input to the appropriate agent."""
     user_input = state["input"].lower()
 
     if "slack" in user_input:
@@ -124,7 +168,5 @@ def router(state, llm):
 
 
 def format_output(state):
-    """
-    Final output formatter
-    """
+    """Final output formatter."""
     return {"final_output": state.get("output", "")}
