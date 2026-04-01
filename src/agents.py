@@ -80,53 +80,92 @@ def slack_agent(state, llm, tools):
     return {**state, "output": output}
 
 
-def email_agent(state, llm, tools):
-    """Agent specialized for email operations.
-    Extracts email body via LLM, then constructs and executes tool call manually.
-    """
-    user_input = state.get("input", " ")
+class Email_work:
+    def email_agent(state, llm, tools):
+        """Agent specialized for email operations.
+        Supports both sending and reading emails based on user intent.
+        """
+        user_input = state.get("input", " ")
+        user_input_lower = user_input.lower()
+        prompt = f"You are decider based on the user input wether the intent is to send_message or read_message{user_input_lower}"
+        result = llm.invoke(prompt)
+        result = result.replace("<think>", "").replace("</think>", "").strip()
 
-    email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
-    to_email = email_match.group(0) if email_match else ""
+        if result == "read_message":
+            return _handle_read_email(state, tools, user_input)
+        else:
+            return _handle_send_email(state, tools, user_input)
 
-    saying_match = re.search(r"saying\s+(.+)", user_input, re.IGNORECASE)
-    body = saying_match.group(1).strip() if saying_match else user_input
+    def _handle_read_email(state, tools, user_input):
+        """Handle reading/searching emails."""
+        read_tool = None
+        search_tool = None
+        for tool in tools:
+            if tool.name == "get_gmail_message":
+                read_tool = tool
+            elif tool.name == "gmail_search":
+                search_tool = tool
 
-    subject_match = re.search(
-        r"(?:about|regarding|on)\s+(.+?)(?:\s+saying|\s*$)", user_input, re.IGNORECASE
-    )
-    if subject_match:
-        subject = subject_match.group(1).strip()
-    else:
-        words = body.split()[:6]
-        subject = " ".join(words) if words else "Email"
+        if not read_tool and not search_tool:
+            return {**state, "output": "No email read/search tool available"}
 
-    print(f"[DEBUG] Extracted email fields:")
-    print(f"[DEBUG]   to: {to_email}")
-    print(f"[DEBUG]   subject: {subject}")
-    print(f"[DEBUG]   body: {body}")
+        query = user_input
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
+        if email_match:
+            query = f"from:{email_match.group(0)} OR to:{email_match.group(0)}"
 
-    email_tool = None
-    for tool in tools:
-        if tool.name == "send_gmail_message":
-            email_tool = tool
-            break
+        if search_tool:
+            tool_result = search_tool.invoke({"query": query})
+        else:
+            tool_result = read_tool.invoke({"query": query})
 
-    if not email_tool:
-        return {**state, "output": "Email tool not found"}
+        return {**state, "output": f"Email search result: {tool_result}"}
 
-    if not to_email:
-        return {**state, "output": "Could not find recipient email address"}
+    def _handle_send_email(state, tools, user_input):
+        """Handle sending emails."""
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
+        to_email = email_match.group(0) if email_match else ""
 
-    tool_result = email_tool.invoke(
-        {
-            "to": to_email,
-            "subject": subject,
-            "message": body,
-        }
-    )
+        saying_match = re.search(r"saying\s+(.+)", user_input, re.IGNORECASE)
+        body = saying_match.group(1).strip() if saying_match else user_input
 
-    return {**state, "output": f"Email sent successfully! {tool_result}"}
+        subject_match = re.search(
+            r"(?:about|regarding|on)\s+(.+?)(?:\s+saying|\s*$)",
+            user_input,
+            re.IGNORECASE,
+        )
+        if subject_match:
+            subject = subject_match.group(1).strip()
+        else:
+            words = body.split()[:6]
+            subject = " ".join(words) if words else "Email"
+
+        print("[DEBUG] Extracted email fields:")
+        print(f"[DEBUG]   to: {to_email}")
+        print(f"[DEBUG]   subject: {subject}")
+        print(f"[DEBUG]   body: {body}")
+
+        send_tool = None
+        for tool in tools:
+            if tool.name == "send_gmail_message":
+                send_tool = tool
+                break
+
+        if not send_tool:
+            return {**state, "output": "Send email tool not found"}
+
+        if not to_email:
+            return {**state, "output": "Could not find recipient email address"}
+
+        tool_result = send_tool.invoke(
+            {
+                "to": to_email,
+                "subject": subject,
+                "message": body,
+            }
+        )
+
+        return {**state, "output": f"Email sent successfully! {tool_result}"}
 
 
 def general_agent_node(state, agent):

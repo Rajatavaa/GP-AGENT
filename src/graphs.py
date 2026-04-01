@@ -2,8 +2,8 @@ from langgraph.graph import StateGraph, END, START
 from typing import TypedDict
 
 from .agents import email_agent, general_agent_node, slack_agent, router
-from .email import email_tools
-from .slack import slack_tools
+from .tools.email_tool import email_tools
+from .tools.slack_tool import slack_tools
 
 
 class Agentstate(TypedDict):

@@ -1,7 +1,7 @@
 from src.graphs import build_graph
 from src.agents import start_agent
-from src.email import email_tools
-from src.slack import slack_tools
+from src.tools.email_tool import email_tools
+from src.tools.slack_tool import slack_tools
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(base_url="http://localhost:8000/v1", api_key="sk-no-key-needed")
@@ -13,6 +13,6 @@ general_agent = start_agent(llm, [])
 
 graph = build_graph(email_agent, slack_agent, general_agent, llm).compile()
 
-result = graph.invoke({"input": "send a message to Saptarshi Chattopadhyah in Slack saying Hi friend"})
+result = graph.invoke({"input": "Send an email to rajatava@aivctalent.com saying The recent agentic project was wondeful and adds a lot of value"})
 
 print(result["output"])
