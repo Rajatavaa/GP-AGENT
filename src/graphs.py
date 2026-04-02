@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, END, START
 from typing import TypedDict
 
-from .agents import email_agent, general_agent_node, slack_agent, router
+from .agents import Email_work, general_agent_node, slack_agent, router
 from .tools.email_tool import email_tools
 from .tools.slack_tool import slack_tools
 
@@ -11,11 +11,11 @@ class Agentstate(TypedDict):
     output: str
 
 
-def build_graph(email_agent_node, slack_agent_node, general_agent, llm):
+def build_graph(general_agent, llm):
     graph = StateGraph(Agentstate)
     graph.add_node("router_node", lambda state: state)
 
-    graph.add_node("email_node", lambda state: email_agent(state, llm, email_tools))
+    graph.add_node("email_node", lambda state: Email_work.email_agent(state, llm, email_tools))
 
     graph.add_node("slack_node", lambda state: slack_agent(state, llm, slack_tools))
 

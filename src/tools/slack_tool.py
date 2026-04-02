@@ -10,7 +10,3 @@ slack_tools = [
     SlackGetChannel(slack_token=SLACK_SECRET),
     SlackGetMessage(slack_token=SLACK_SECRET),
 ]
-#Test the Slack api wether its working or not
-response = slack_tools[1].invoke({})
-print(f"The response is {response}")
-print(f"The result of salck calls: {slack_tools}")

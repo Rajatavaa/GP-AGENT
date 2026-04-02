@@ -13,3 +13,4 @@ wheels/
 .env
 **/token.json
 **/credentials.json
+HOW-TO-RUN.md
