@@ -32,7 +32,7 @@ HELP_TEXT = f"""
 
 
 def start():
-    print(f"\n  {DIM}Connecting to Ollama...{RESET}", end=" ", flush=True)
+    print(f"\n  {DIM}Connecting to LLM...{RESET}", end=" ", flush=True)
     try:
         base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
         model = os.getenv("LLM_MODEL", "qwen2.5:3b")
@@ -40,7 +40,7 @@ def start():
         llm.invoke("hi")
         print(f"{DIM}done{RESET}")
     except (ReqConnectionError, ConnectionError):
-        print(f"\n\n  Error: Cannot connect to Ollama. Run: ollama serve\n")
+        print(f"\n\n  Error: Cannot connect to LLM server at {base_url}\n")
         sys.exit(1)
     except Exception as e:
         print(f"\n\n  Error: {e}\n")
@@ -77,7 +77,7 @@ def start():
                 print(f"  {line}")
             print()
         except (ReqConnectionError, ConnectionError):
-            print("  Error: Lost connection to Ollama. Is it still running?\n")
+            print("  Error: Lost connection to LLM server.\n")
         except Exception as e:
             error_msg = str(e).lower()
             if "invalid_auth" in error_msg or "token" in error_msg:

@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 import os
-from langchain_community.tools import SlackGetChannel, SlackGetMessage, SlackSendMessage  
+from langchain_community.tools import SlackGetChannel, SlackGetMessage, SlackSendMessage
 
 load_dotenv()
 

@@ -147,7 +147,7 @@ When sending messages, you'll get a preview with options to **send**, **edit**, 
 
 ## Troubleshooting
 
-- **"Cannot connect to Ollama"** — Your local LLM server isn't running. Start it before running the agent.
+- **"Cannot connect to LLM server"** — Your local LLM server isn't running. Start it before running the agent.
 - **Gmail auth errors** — Ensure `credentials.json` exists. Delete `token.json` to re-authenticate.
 - **"Slack token invalid"** — Check your `.env` file has a valid `SLACK_USER_TOKEN`.
 - **Wrong routing** — Include "email" or "slack" in your query for reliable routing. Ambiguous queries depend on your local model's classification accuracy.
