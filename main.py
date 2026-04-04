@@ -34,7 +34,7 @@ HELP_TEXT = f"""
 def start():
     print(f"\n  {DIM}Connecting to LLM...{RESET}", end=" ", flush=True)
     try:
-        base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        base_url = os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
         model = os.getenv("LLM_MODEL", "qwen2.5:3b")
         llm = ChatOpenAI(base_url=base_url, api_key="sk-no-key-needed", model=model)
         llm.invoke("hi")

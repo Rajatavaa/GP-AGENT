@@ -4,6 +4,11 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage
 
 
+DIM = "\033[2m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+
 def start_agent(llm, tools):
     """Creates an agent with the given LLM and tools.
     If no tools, returns a plain chat agent.
@@ -12,11 +17,6 @@ def start_agent(llm, tools):
         return llm
 
     return llm.bind_tools(tools)
-
-
-DIM = "\033[2m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
 
 
 def _confirm_message(message, llm=None):
@@ -60,233 +60,63 @@ def _confirm_message(message, llm=None):
 
 def _needs_llm_compose(user_input):
     """Check if the user wants the LLM to compose/write the message."""
-    keywords = ["write", "compose", "draft", "create", "generate", "professional", "formal", "word"]
+    keywords = [
+        "write",
+        "compose",
+        "draft",
+        "create",
+        "generate",
+        "professional",
+        "formal",
+        "word",
+        "on your own",
+        "add a line",
+        "make it",
+    ]
     user_lower = user_input.lower()
     return any(k in user_lower for k in keywords)
 
 
-def _llm_compose_message(llm, user_input):
+def _llm_compose_message(state, llm):
     """Use the LLM to compose a message based on the user's intent."""
+    user_input = state.get("input", "")
     prompt = (
-        "You are a message writer. Based on the user's request, write ONLY the message content. "
-        "Do not include any explanation, prefix, or formatting. Just the message itself.\n\n"
+        "You are a message writer. Based on the user's request, write ONLY the message content."
+        "Do not include any explanation, prefix, reasoning, or formatting. Just the message itself.\n\n"
+        "Please do not include the subject in the email body"
         f"User request: {user_input}"
     )
     result = llm.invoke(prompt)
     content = result.content if hasattr(result, "content") else str(result)
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
     content = content.replace("<think>", "").replace("</think>", "").strip()
-    return content
+    return {**state, "composed_message": content}
 
 
-def slack_agent(state, llm, tools):
-    """Agent specialized for Slack operations."""
-    user_input = state.get("input", " ")
-    user_input_lower = user_input.lower()
-
-    if "list" in user_input_lower or "channels" in user_input_lower:
-        return _handle_slack_list_channels(state, tools)
-    elif "read" in user_input_lower or "get" in user_input_lower or "check" in user_input_lower:
-        return _handle_slack_read(state, tools, user_input)
-    else:
-        return _handle_slack_send(state, tools, user_input, llm)
+def _extract_name_from_email(email):
+    """Extract name part from email address (e.g., rajatava from rajatava@aivctalent.com)."""
+    if not email:
+        return None
+    name_part = email.split("@")[0]
+    name_part = name_part.replace(".", " ").replace("_", " ")
+    return name_part.strip()
 
 
-def _handle_slack_list_channels(state, tools):
-    """Handle listing Slack channels."""
-    channel_tool = None
-    for tool in tools:
-        if tool.name == "get_channelid_name_dict":
-            channel_tool = tool
-            break
+def _extract_sender_name(body):
+    """Extract sender name from email signature."""
+    patterns = [
+        r"(?:Best|Regards|Sincerely|Thanks),\s*\n?(.+?)(?:\n|$)",
+        r"(?:Best|Regards|Sincerely|Thanks),\s*\n?\[\s*Your\s+Name\s*\]",
+    ]
 
-    if not channel_tool:
-        return {**state, "output": "Slack channel list tool not found"}
+    for pattern in patterns:
+        match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
+        if match:
+            name = match.group(1).strip()
+            if name and name != "Your Name":
+                return name
 
-    channels = channel_tool.invoke({})
-    if isinstance(channels, str):
-        channels = ast.literal_eval(channels)
-
-    lines = ["Slack Channels:"]
-    lines.append("  " + "-" * 30)
-    for ch in channels:
-        name = ch.get("name", "unknown")
-        members = ch.get("num_members", 0)
-        lines.append(f"  # {name}  ({members} members)")
-    lines.append("  " + "-" * 30)
-
-    return {**state, "output": "\n".join(lines)}
-
-
-def _handle_slack_send(state, tools, user_input, llm):
-    """Handle sending a Slack message."""
-    channel_match = re.search(r"#([\w-]+)", user_input)
-    channel = channel_match.group(1) if channel_match else "general"
-
-    if _needs_llm_compose(user_input):
-        message = _llm_compose_message(llm, user_input)
-    else:
-        saying_match = re.search(r"saying\s+(.+)", user_input, re.IGNORECASE)
-        message = saying_match.group(1).strip() if saying_match else user_input
-
-    send_tool = None
-    for tool in tools:
-        if tool.name == "send_message":
-            send_tool = tool
-            break
-
-    if not send_tool:
-        return {**state, "output": "Slack send tool not found"}
-
-    confirmed = _confirm_message(message, llm)
-    if not confirmed:
-        return {**state, "output": "Message cancelled."}
-
-    send_tool.invoke({"message": confirmed, "channel": channel})
-    return {**state, "output": f"Message sent to #{channel}:\n  \"{confirmed}\""}
-
-
-def _handle_slack_read(state, tools, user_input):
-    """Handle reading Slack messages."""
-    channel_match = re.search(r"#([\w-]+)", user_input)
-    channel_name = channel_match.group(1) if channel_match else "general"
-
-    channel_tool = None
-    read_tool = None
-    for tool in tools:
-        if tool.name == "get_channelid_name_dict":
-            channel_tool = tool
-        elif tool.name == "get_messages":
-            read_tool = tool
-
-    if not read_tool or not channel_tool:
-        return {**state, "output": "Slack read tools not found"}
-
-    channels = channel_tool.invoke({})
-    channel_id = None
-    if isinstance(channels, str):
-        channels = ast.literal_eval(channels)
-    for ch in channels:
-        if ch.get("name") == channel_name:
-            channel_id = ch["id"]
-            break
-
-    if not channel_id:
-        return {**state, "output": f"Channel #{channel_name} not found"}
-
-    tool_result = read_tool.invoke({"channel_id": channel_id})
-
-    messages = tool_result
-    if isinstance(messages, str):
-        messages = ast.literal_eval(messages)
-
-    if not messages:
-        return {**state, "output": f"No messages in #{channel_name}"}
-
-    lines = [f"Messages from #{channel_name}:"]
-    lines.append("  " + "-" * 40)
-    for msg in reversed(messages):
-        ts = float(msg.get("ts", 0))
-        time_str = datetime.fromtimestamp(ts).strftime("%I:%M %p")
-        text = msg.get("text", "")
-        if text.startswith("<@") and "has joined" in text:
-            continue
-        lines.append(f"  [{time_str}]  {text}")
-    lines.append("  " + "-" * 40)
-
-    return {**state, "output": "\n".join(lines)}
-
-
-class Email_work:
-    def email_agent(state, llm, tools):
-        """Agent specialized for email operations.
-        Supports both sending and reading emails based on user intent.
-        """
-        user_input = state.get("input", " ")
-        user_input_lower = user_input.lower()
-        prompt = f"You are decider based on the user input wether the intent is to send_message or read_message{user_input_lower}"
-        result = llm.invoke(prompt)
-        result = result.content if hasattr(result, "content") else str(result)
-        result = result.replace("<think>", "").replace("</think>", "").strip()
-
-        if result == "read_message":
-            return Email_work._handle_read_email(state, tools, user_input)
-        else:
-            return Email_work._handle_send_email(state, tools, user_input, llm)
-
-    def _handle_read_email(state, tools, user_input):
-        """Handle reading/searching emails."""
-        read_tool = None
-        search_tool = None
-        for tool in tools:
-            if tool.name == "get_gmail_message":
-                read_tool = tool
-            elif tool.name == "gmail_search":
-                search_tool = tool
-
-        if not read_tool and not search_tool:
-            return {**state, "output": "No email read/search tool available"}
-
-        query = user_input
-        email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
-        if email_match:
-            query = f"from:{email_match.group(0)} OR to:{email_match.group(0)}"
-
-        if search_tool:
-            tool_result = search_tool.invoke({"query": query})
-        else:
-            tool_result = read_tool.invoke({"query": query})
-
-        return {**state, "output": f"Email search result: {tool_result}"}
-
-    def _handle_send_email(state, tools, user_input, llm=None):
-        """Handle sending emails."""
-        email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
-        to_email = email_match.group(0) if email_match else ""
-
-        if llm and _needs_llm_compose(user_input):
-            body = _llm_compose_message(llm, user_input)
-        else:
-            saying_match = re.search(r"saying\s+(.+)", user_input, re.IGNORECASE)
-            body = saying_match.group(1).strip() if saying_match else user_input
-
-        subject_match = re.search(
-            r"(?:about|regarding|on)\s+(.+?)(?:\s+saying|\s*$)",
-            user_input,
-            re.IGNORECASE,
-        )
-        if subject_match:
-            subject = subject_match.group(1).strip()
-        else:
-            words = body.split()[:6]
-            subject = " ".join(words) if words else "Email"
-
-        send_tool = None
-        for tool in tools:
-            if tool.name == "send_gmail_message":
-                send_tool = tool
-                break
-
-        if not send_tool:
-            return {**state, "output": "Send email tool not found"}
-
-        if not to_email:
-            return {**state, "output": "Could not find recipient email address"}
-
-        print(f"\n  To: {to_email}")
-        print(f"  Subject: {subject}")
-        confirmed = _confirm_message(body, llm)
-        if not confirmed:
-            return {**state, "output": "Email cancelled."}
-
-        send_tool.invoke(
-            {
-                "to": to_email,
-                "subject": subject,
-                "message": confirmed,
-            }
-        )
-
-        return {**state, "output": f"Email sent to {to_email}: \"{subject}\""}
+    return None
 
 
 def general_agent_node(state, agent):
@@ -311,17 +141,190 @@ def general_agent_node(state, agent):
     return {**state, "output": output}
 
 
-def router(state, llm):
-    """Routes the user input to the appropriate agent."""
-    user_input = state["input"].lower()
+class Slack_work:
+    def handle_slack_list_channels(state, tools):
+        channel_tool = None
+        for tool in tools:
+            if tool.name == "get_channelid_name_dict":
+                channel_tool = tool
+                break
 
-    if "slack" in user_input:
-        return "slack"
-    if "email" in user_input or "mail" in user_input:
-        return "email"
+        if not channel_tool:
+            return {**state, "output": "Slack channel list tool not found"}
 
-    prompt = f"""Classify intent: email, slack, or general. Input: {user_input}"""
-    result = llm.invoke(prompt).content
-    result = result.replace("<think>", "").replace("</think>", "").strip()
-    result = result.lower().split()[0] if result.split() else "general"
-    return result
+        channels = channel_tool.invoke({})
+        if isinstance(channels, str):
+            channels = ast.literal_eval(channels)
+
+        lines = ["Slack Channels:"]
+        lines.append("  " + "-" * 30)
+        for ch in channels:
+            name = ch.get("name", "unknown")
+            members = ch.get("num_members", 0)
+            lines.append(f"  # {name}  ({members} members)")
+        lines.append("  " + "-" * 30)
+
+        return {**state, "output": "\n".join(lines)}
+
+    def handle_slack_send(state, tools, llm):
+        channel_match = re.search(r"#([\w-]+)", state.get("input", ""))
+        channel = channel_match.group(1) if channel_match else "general"
+
+        composed = state.get("composed_message")
+        if composed:
+            message = composed
+        else:
+            saying_match = re.search(
+                r"saying\s+(.+)", state.get("input", ""), re.IGNORECASE
+            )
+            message = (
+                saying_match.group(1).strip()
+                if saying_match
+                else state.get("input", "")
+            )
+
+        send_tool = None
+        for tool in tools:
+            if tool.name == "send_message":
+                send_tool = tool
+                break
+
+        if not send_tool:
+            return {**state, "output": "Slack send tool not found"}
+
+        confirmed = _confirm_message(message, llm)
+        if not confirmed:
+            return {**state, "output": "Message cancelled."}
+
+        send_tool.invoke({"message": confirmed, "channel": channel})
+        return {**state, "output": f'Message sent to #{channel}:\n  "{confirmed}"'}
+
+    def handle_slack_read(state, tools):
+        channel_match = re.search(r"#([\w-]+)", state.get("input", ""))
+        channel_name = channel_match.group(1) if channel_match else "general"
+
+        channel_tool = None
+        read_tool = None
+        for tool in tools:
+            if tool.name == "get_channelid_name_dict":
+                channel_tool = tool
+            elif tool.name == "get_messages":
+                read_tool = tool
+
+        if not read_tool or not channel_tool:
+            return {**state, "output": "Slack read tools not found"}
+
+        channels = channel_tool.invoke({})
+        channel_id = None
+        if isinstance(channels, str):
+            channels = ast.literal_eval(channels)
+        for ch in channels:
+            if ch.get("name") == channel_name:
+                channel_id = ch["id"]
+                break
+
+        if not channel_id:
+            return {**state, "output": f"Channel #{channel_name} not found"}
+
+        tool_result = read_tool.invoke({"channel_id": channel_id})
+
+        messages = tool_result
+        if isinstance(messages, str):
+            messages = ast.literal_eval(messages)
+
+        if not messages:
+            return {**state, "output": f"No messages in #{channel_name}"}
+
+        lines = [f"Messages from #{channel_name}:"]
+        lines.append("  " + "-" * 40)
+        for msg in reversed(messages):
+            ts = float(msg.get("ts", 0))
+            time_str = datetime.fromtimestamp(ts).strftime("%I:%M %p")
+            text = msg.get("text", "")
+            if text.startswith("<@") and "has joined" in text:
+                continue
+            lines.append(f"  [{time_str}]  {text}")
+        lines.append("  " + "-" * 40)
+
+        return {**state, "output": "\n".join(lines)}
+
+
+class Email_work:
+    def handle_email_send(state, tools, llm):
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+", state.get("input", ""))
+        to_email = email_match.group(0) if email_match else ""
+
+        composed = state.get("composed_message")
+        if composed:
+            body = composed
+        else:
+            saying_match = re.search(
+                r"saying\s+(.+)", state.get("input", ""), re.IGNORECASE
+            )
+            body = (
+                saying_match.group(1).strip()
+                if saying_match
+                else state.get("input", "")
+            )
+
+        subject_match = re.search(
+            r"(?:about|regarding)\s+(.+?)(?:\s+saying|\s*$)",
+            state.get("input", ""),
+            re.IGNORECASE,
+        )
+        subject = (
+            subject_match.group(1).strip()
+            if subject_match
+            else " ".join(body.split()[:6])
+            if body
+            else "Email"
+        )
+
+        send_tool = None
+        for tool in tools:
+            if tool.name == "send_gmail_message":
+                send_tool = tool
+                break
+
+        if not send_tool:
+            return {**state, "output": "Send email tool not found"}
+        if not to_email:
+            return {**state, "output": "Could not find recipient email address"}
+
+        print(f"\n  To: {to_email}")
+        print(f"  Subject: {subject}")
+        confirmed = _confirm_message(body, llm)
+        if not confirmed:
+            return {**state, "output": "Email cancelled."}
+
+        extracted_name = _extract_sender_name(confirmed)
+        if extracted_name:
+            confirmed = re.sub(
+                rf"(?:Best|Regards|Sincerely|Thanks),\s*\n?.*{re.escape(extracted_name)}",
+                "",
+                confirmed,
+                flags=re.IGNORECASE | re.DOTALL,
+            ).strip()
+
+        send_tool.invoke({"to": to_email, "subject": subject, "message": confirmed})
+        return {**state, "output": f'Email sent to {to_email}: "{subject}"'}
+
+    def handle_email_read(state, tools):
+        read_tool = None
+        search_tool = None
+        for tool in tools:
+            if tool.name == "get_gmail_message":
+                read_tool = tool
+            elif tool.name == "gmail_search":
+                search_tool = tool
+
+        if not read_tool and not search_tool:
+            return {**state, "output": "No email read/search tool available"}
+
+        query = state.get("input", "")
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+", query)
+        if email_match:
+            query = f"from:{email_match.group(0)} OR to:{email_match.group(0)}"
+
+        tool_result = (search_tool or read_tool).invoke({"query": query})
+        return {**state, "output": f"Email search result: {tool_result}"}
