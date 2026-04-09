@@ -1,27 +1,26 @@
 import re
 
-DIM = "[2m"
-BOLD = "[1m"
-RESET = "[0m"
+from prompt_toolkit import prompt as pt_prompt
+
+from .display import console
 
 
 def _confirm_message(message, llm=None):
-    """Show message to user and let them confirm, edit, or cancel."""
-    print(f"\n  {BOLD}Preview:{RESET}")
+    console.print("\n  [bold]Preview:[/bold]")
     for line in message.split("\n"):
-        print(f"    {line}")
-    print(f"\n  {DIM}[Y] Send  [E] Edit  [C] Cancel{RESET}")
+        console.print(f"    {line}")
+    console.print("\n  [dim][Y] Send  [E] Edit  [C] Cancel[/dim]")
 
     while True:
-        choice = input("  > ").strip().lower()
+        choice = pt_prompt("  > ").strip().lower()
 
         if choice in ("y", "yes", ""):
             return message
         elif choice in ("c", "cancel"):
             return None
         elif choice in ("e", "edit"):
-            print(f"  {DIM}What to change:{RESET}")
-            edits = input("  > ").strip()
+            console.print("  [dim]What to change:[/dim]")
+            edits = pt_prompt("  > ").strip()
             if not edits:
                 continue
             if llm:
@@ -33,19 +32,18 @@ def _confirm_message(message, llm=None):
                 )
                 result = llm.invoke(prompt)
                 content = result.content if hasattr(result, "content") else str(result)
-                message = content.replace("“", "").replace("”", "").strip()
+                message = content.replace("\u201c", "").replace("\u201d", "").strip()
             else:
                 message = edits
-            print(f"\n  {BOLD}Updated:{RESET}")
+            console.print("\n  [bold]Updated:[/bold]")
             for line in message.split("\n"):
-                print(f"    {line}")
-            print(f"\n  {DIM}[Y] Send  [E] Edit again  [C] Cancel{RESET}")
+                console.print(f"    {line}")
+            console.print("\n  [dim][Y] Send  [E] Edit again  [C] Cancel[/dim]")
         else:
-            print(f"  {DIM}Enter Y, E, or C{RESET}")
+            console.print("  [dim]Enter Y, E, or C[/dim]")
 
 
 def _needs_llm_compose(user_input):
-    """Check if the user wants the LLM to compose/write the message."""
     keywords = [
         "write",
         "compose",
@@ -64,7 +62,6 @@ def _needs_llm_compose(user_input):
 
 
 def _llm_compose_message(state, llm):
-    """Use the LLM to compose a message based on the user's intent."""
     user_input = state.get("input", "")
     prompt = (
         "You are a message writer. Based on the user's request, write ONLY the message content."
@@ -74,13 +71,12 @@ def _llm_compose_message(state, llm):
     )
     result = llm.invoke(prompt)
     content = result.content if hasattr(result, "content") else str(result)
-    content = re.sub(r"“.*?”", "", content, flags=re.DOTALL)
-    content = content.replace("“", "").replace("”", "").strip()
+    content = re.sub(r"\u201c.*?\u201d", "", content, flags=re.DOTALL)
+    content = content.replace("\u201c", "").replace("\u201d", "").strip()
     return {**state, "composed_message": content}
 
 
 def _extract_name_from_email(email):
-    """Extract name part from email address (e.g., rajatava from rajatava@aivctalent.com)."""
     if not email:
         return None
     name_part = email.split("@")[0]
@@ -89,7 +85,6 @@ def _extract_name_from_email(email):
 
 
 def _extract_sender_name(body):
-    """Extract sender name from email signature."""
     patterns = [
         r"(?:Best|Regards|Sincerely|Thanks),\s*\n?(.+?)(?:\n|$)",
         r"(?:Best|Regards|Sincerely|Thanks),\s*\n?\[\s*Your\s+Name\s*\]",

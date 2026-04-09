@@ -1,93 +1,136 @@
 import os
 import sys
+import time
+
 from dotenv import load_dotenv
 from requests.exceptions import ConnectionError as ReqConnectionError
 from langchain_openai import ChatOpenAI
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.completion import WordCompleter
 
 from src.graphs import build_graph
 from src.agents import start_agent
+from src.display import console, show_banner, show_help, show_session_info
 
 load_dotenv()
 
-DIM = "\033[2m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
-
-HELP_TEXT = f"""
-  {BOLD}Slack{RESET}
-    send a slack message to #channel saying ...
-    write a 50 word slack message to #channel about ...
-    read slack messages from #channel
-    list my slack channels
-
-  {BOLD}Email{RESET}
-    send an email to user@email.com saying ...
-    write a formal email to user@email.com about ...
-    read my emails from user@email.com
-
-  {BOLD}Other{RESET}
-    help    Show this menu
-    quit    Exit
-"""
+COMMANDS = [
+    "/help",
+    "/quit",
+    "/exit",
+    "/info",
+    "/clear",
+    "send",
+    "read",
+    "list",
+    "write",
+]
+COMPLETER = WordCompleter(COMMANDS, ignore_case=True, sentence=True)
 
 
 def start():
-    print(f"\n  {DIM}Connecting to LLM...{RESET}", end=" ", flush=True)
+    console.print("  [dim]Connecting to LLM...[/]", end=" ")
     try:
         base_url = os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
         model = os.getenv("LLM_MODEL", "qwen2.5:3b")
         llm = ChatOpenAI(base_url=base_url, api_key="sk-no-key-needed", model=model)
         llm.invoke("hi")
-        print(f"{DIM}done{RESET}")
+        console.print("[dim]done[/]")
     except (ReqConnectionError, ConnectionError):
-        print(f"\n\n  Error: Cannot connect to LLM server at {base_url}\n")
+        console.print(
+            f"\n\n  [bold red]Error:[/bold red] Cannot connect to LLM server at {base_url}\n"
+        )
         sys.exit(1)
     except Exception as e:
-        print(f"\n\n  Error: {e}\n")
+        console.print(f"\n\n  [bold red]Error:[/bold red] {e}\n")
         sys.exit(1)
 
     general_agent = start_agent(llm, [])
     graph = build_graph(general_agent, llm).compile()
 
-    print(f"\n  {BOLD}GP-Agent{RESET} {DIM}v1.0{RESET}")
-    print(f"  {DIM}Type 'help' for commands, 'quit' to exit{RESET}\n")
+    show_banner(model)
+
+    history_file = os.path.expanduser("~/.gp_agent_history")
+    session = PromptSession(
+        history=FileHistory(history_file),
+        completer=COMPLETER,
+    )
+
+    start_time = time.time()
 
     while True:
         try:
-            user_input = input("  > ").strip()
+            first_line = session.prompt("  > ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\n")
+            console.print("\n  [dim]Bye![/]\n")
             break
 
+        if not first_line:
+            continue
+
+        user_input = first_line
+        while user_input.endswith("\\"):
+            user_input = user_input[:-1]
+            try:
+                continuation = session.prompt("  ... ").strip()
+            except (KeyboardInterrupt, EOFError):
+                user_input = user_input.strip()
+                break
+            if not continuation:
+                break
+            user_input += " " + continuation
+
+        user_input = user_input.strip()
         if not user_input:
             continue
 
-        if user_input.lower() in ("quit", "exit", "q"):
-            print()
+        cmd = user_input.lower().lstrip("/")
+
+        if cmd in ("quit", "exit", "q"):
+            console.print("\n  [dim]Bye![/]\n")
             break
 
-        if user_input.lower() in ("help", "h", "?"):
-            print(HELP_TEXT)
+        if cmd in ("help", "h", "?"):
+            show_help()
+            continue
+
+        if cmd == "info":
+            show_session_info(model, start_time)
+            continue
+
+        if cmd == "clear":
+            console.clear()
             continue
 
         try:
+            console.print("  [dim]Thinking...[/]")
             result = graph.invoke({"input": user_input})
             output = result["output"]
-            for line in output.split("\n"):
-                print(f"  {line}")
-            print()
+            sys.stdout.write("\033[1A\033[2K")
+            sys.stdout.flush()
+            console.print(output)
+            console.print()
         except (ReqConnectionError, ConnectionError):
-            print("  Error: Lost connection to LLM server.\n")
+            console.print(
+                "  [bold red]Error:[/bold red] Lost connection to LLM server.\n"
+            )
         except Exception as e:
             error_msg = str(e).lower()
             if "invalid_auth" in error_msg or "token" in error_msg:
-                print("  Error: Slack token invalid. Check .env file.\n")
+                console.print(
+                    "  [bold red]Error:[/bold red] Slack token invalid. Check .env file.\n"
+                )
             elif "connection" in error_msg or "refused" in error_msg:
-                print("  Error: Connection failed. Check internet/Ollama.\n")
+                console.print(
+                    "  [bold red]Error:[/bold red] Connection failed. Check internet/Ollama.\n"
+                )
             elif "credential" in error_msg or "gmail" in error_msg:
-                print("  Error: Gmail credentials issue. Check credentials.json.\n")
+                console.print(
+                    "  [bold red]Error:[/bold red] Gmail credentials issue. Check credentials.json.\n"
+                )
             else:
-                print(f"  Error: {e}\n")
+                console.print(f"  [bold red]Error:[/bold red] {e}\n")
 
 
 if __name__ == "__main__":

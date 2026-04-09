@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, END, START
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from .agents import general_agent_node, Slack_work, Email_work
 from .router import router, should_compose
@@ -10,7 +10,7 @@ from .tools.slack_tool import slack_tools
 
 class Agentstate(TypedDict):
     input: str
-    output: str
+    output: Any
     composed_message: str
 
 

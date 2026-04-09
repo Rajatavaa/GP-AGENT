@@ -1,5 +1,6 @@
 def router(state, llm):
-    """Routes user input to the appropriate agent and action using LLM."""
+    from .display import console
+
     user_input = state["input"]
 
     prompt = f"""You are a routing assistant. Based on the user input, determine which agent and action to use.
@@ -50,7 +51,7 @@ Route:"""
 
         return "general_chat"
     except Exception as e:
-        print(f"Router error: {e}, defaulting to general_chat")
+        console.print(f"  [dim]Router error: {e}, defaulting to general_chat[/dim]")
         return "general_chat"
 
 

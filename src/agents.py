@@ -2,14 +2,18 @@ import ast
 import re
 from datetime import datetime
 from langchain_core.messages import HumanMessage
+from rich.markdown import Markdown
 
 from .utils import _confirm_message, _extract_sender_name
+from .display import (
+    console,
+    create_channel_table,
+    create_slack_messages_table,
+    create_sent_panel,
+)
 
 
 def start_agent(llm, tools):
-    """Creates an agent with the given LLM and tools.
-    If no tools, returns a plain chat agent.
-    """
     if not tools:
         return llm
 
@@ -17,25 +21,18 @@ def start_agent(llm, tools):
 
 
 def general_agent_node(state, agent):
-    """Fallback agent for general queries."""
     user_input = state.get("input", "")
 
     result = agent.invoke(
-        {
-            "messages": [
-                HumanMessage(
-                    content=f"You are a helpful assistant. Handle this:\n{user_input}"
-                )
-            ]
-        }
+        [
+            HumanMessage(
+                content=f"You are a helpful assistant. Handle this:\n{user_input}"
+            )
+        ]
     )
 
-    output = (
-        result.get("messages", [])[-1].content
-        if result.get("messages")
-        else str(result)
-    )
-    return {**state, "output": output}
+    output = result.content if hasattr(result, "content") else str(result)
+    return {**state, "output": Markdown(output)}
 
 
 class Slack_work:
@@ -53,15 +50,7 @@ class Slack_work:
         if isinstance(channels, str):
             channels = ast.literal_eval(channels)
 
-        lines = ["Slack Channels:"]
-        lines.append("  " + "-" *30)
-        for ch in channels:
-            name = ch.get("name", "unknown")
-            members = ch.get("num_members", 0)
-            lines.append(f"  # {name}  ({members} members)")
-        lines.append("  " + "-" *30)
-
-        return {**state, "output": "\n".join(lines)}
+        return {**state, "output": create_channel_table(channels)}
 
     def handle_slack_send(state, tools, llm):
         channel_match = re.search(r"#([\w-]+)", state.get("input", ""))
@@ -94,7 +83,13 @@ class Slack_work:
             return {**state, "output": "Message cancelled."}
 
         send_tool.invoke({"message": confirmed, "channel": channel})
-        return {**state, "output": f'Message sent to #{channel}:\n  "{confirmed}"'}
+        return {
+            **state,
+            "output": create_sent_panel(
+                f"Message sent to #{channel}",
+                confirmed,
+            ),
+        }
 
     def handle_slack_read(state, tools):
         channel_match = re.search(r"#([\w-]+)", state.get("input", ""))
@@ -132,18 +127,19 @@ class Slack_work:
         if not messages:
             return {**state, "output": f"No messages in #{channel_name}"}
 
-        lines = [f"Messages from #{channel_name}:"]
-        lines.append("  " + "-" *40)
+        display_messages = []
         for msg in reversed(messages):
-            ts = float(msg.get("ts", 0))
-            time_str = datetime.fromtimestamp(ts).strftime("%I:%M %p")
             text = msg.get("text", "")
             if text.startswith("<@") and "has joined" in text:
                 continue
-            lines.append(f"  [{time_str}]  {text}")
-        lines.append("  " + "-" *40)
+            ts = float(msg.get("ts", 0))
+            time_str = datetime.fromtimestamp(ts).strftime("%I:%M %p")
+            display_messages.append({"_time_str": time_str, "text": text})
 
-        return {**state, "output": "\n".join(lines)}
+        return {
+            **state,
+            "output": create_slack_messages_table(channel_name, display_messages),
+        }
 
 
 class Email_work:
@@ -188,11 +184,14 @@ class Email_work:
         if not to_email:
             return {**state, "output": "Could not find recipient email address"}
 
-        print(f"\n  To: {to_email}")
-        print(f"  Subject: {subject}")
+        console.print(f"\n  [bold]To:[/bold] {to_email}")
+        console.print(f"  [bold]Subject:[/bold] {subject}")
         confirmed = _confirm_message(body, llm)
         if not confirmed:
             return {**state, "output": "Email cancelled."}
+
+        if confirmed != body and not subject_match:
+            subject = " ".join(confirmed.split()[:6]) if confirmed else "Email"
 
         extracted_name = _extract_sender_name(confirmed)
         if extracted_name:
@@ -204,7 +203,13 @@ class Email_work:
             ).strip()
 
         send_tool.invoke({"to": to_email, "subject": subject, "message": confirmed})
-        return {**state, "output": f'Email sent to {to_email}: "{subject}"'}
+        return {
+            **state,
+            "output": create_sent_panel(
+                "Email Sent",
+                f"To: {to_email}\nSubject: {subject}",
+            ),
+        }
 
     def handle_email_read(state, tools):
         read_tool = None
