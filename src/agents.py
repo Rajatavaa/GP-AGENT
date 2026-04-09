@@ -3,10 +3,7 @@ import re
 from datetime import datetime
 from langchain_core.messages import HumanMessage
 
-
-DIM = "\033[2m"
-BOLD = "\033[1m"
-RESET = "\033[0m"
+from .utils import _confirm_message, _extract_sender_name
 
 
 def start_agent(llm, tools):
@@ -17,106 +14,6 @@ def start_agent(llm, tools):
         return llm
 
     return llm.bind_tools(tools)
-
-
-def _confirm_message(message, llm=None):
-    """Show message to user and let them confirm, edit, or cancel."""
-    print(f"\n  {BOLD}Preview:{RESET}")
-    for line in message.split("\n"):
-        print(f"    {line}")
-    print(f"\n  {DIM}[Y] Send  [E] Edit  [C] Cancel{RESET}")
-
-    while True:
-        choice = input("  > ").strip().lower()
-
-        if choice in ("y", "yes", ""):
-            return message
-        elif choice in ("c", "cancel"):
-            return None
-        elif choice in ("e", "edit"):
-            print(f"  {DIM}What to change:{RESET}")
-            edits = input("  > ").strip()
-            if not edits:
-                continue
-            if llm:
-                prompt = (
-                    "You are a message editor. Here is the original message:\n\n"
-                    f"{message}\n\n"
-                    f"The user wants these changes: {edits}\n\n"
-                    "Write ONLY the updated message. No explanation."
-                )
-                result = llm.invoke(prompt)
-                content = result.content if hasattr(result, "content") else str(result)
-                message = content.replace("<think>", "").replace("</think>", "").strip()
-            else:
-                message = edits
-            print(f"\n  {BOLD}Updated:{RESET}")
-            for line in message.split("\n"):
-                print(f"    {line}")
-            print(f"\n  {DIM}[Y] Send  [E] Edit again  [C] Cancel{RESET}")
-        else:
-            print(f"  {DIM}Enter Y, E, or C{RESET}")
-
-
-def _needs_llm_compose(user_input):
-    """Check if the user wants the LLM to compose/write the message."""
-    keywords = [
-        "write",
-        "compose",
-        "draft",
-        "create",
-        "generate",
-        "professional",
-        "formal",
-        "word",
-        "on your own",
-        "add a line",
-        "make it",
-    ]
-    user_lower = user_input.lower()
-    return any(k in user_lower for k in keywords)
-
-
-def _llm_compose_message(state, llm):
-    """Use the LLM to compose a message based on the user's intent."""
-    user_input = state.get("input", "")
-    prompt = (
-        "You are a message writer. Based on the user's request, write ONLY the message content."
-        "Do not include any explanation, prefix, reasoning, or formatting. Just the message itself.\n\n"
-        "Please do not include the subject in the email body"
-        f"User request: {user_input}"
-    )
-    result = llm.invoke(prompt)
-    content = result.content if hasattr(result, "content") else str(result)
-    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
-    content = content.replace("<think>", "").replace("</think>", "").strip()
-    return {**state, "composed_message": content}
-
-
-def _extract_name_from_email(email):
-    """Extract name part from email address (e.g., rajatava from rajatava@aivctalent.com)."""
-    if not email:
-        return None
-    name_part = email.split("@")[0]
-    name_part = name_part.replace(".", " ").replace("_", " ")
-    return name_part.strip()
-
-
-def _extract_sender_name(body):
-    """Extract sender name from email signature."""
-    patterns = [
-        r"(?:Best|Regards|Sincerely|Thanks),\s*\n?(.+?)(?:\n|$)",
-        r"(?:Best|Regards|Sincerely|Thanks),\s*\n?\[\s*Your\s+Name\s*\]",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
-        if match:
-            name = match.group(1).strip()
-            if name and name != "Your Name":
-                return name
-
-    return None
 
 
 def general_agent_node(state, agent):
@@ -157,12 +54,12 @@ class Slack_work:
             channels = ast.literal_eval(channels)
 
         lines = ["Slack Channels:"]
-        lines.append("  " + "-" * 30)
+        lines.append("  " + "-" *30)
         for ch in channels:
             name = ch.get("name", "unknown")
             members = ch.get("num_members", 0)
             lines.append(f"  # {name}  ({members} members)")
-        lines.append("  " + "-" * 30)
+        lines.append("  " + "-" *30)
 
         return {**state, "output": "\n".join(lines)}
 
@@ -236,7 +133,7 @@ class Slack_work:
             return {**state, "output": f"No messages in #{channel_name}"}
 
         lines = [f"Messages from #{channel_name}:"]
-        lines.append("  " + "-" * 40)
+        lines.append("  " + "-" *40)
         for msg in reversed(messages):
             ts = float(msg.get("ts", 0))
             time_str = datetime.fromtimestamp(ts).strftime("%I:%M %p")
@@ -244,7 +141,7 @@ class Slack_work:
             if text.startswith("<@") and "has joined" in text:
                 continue
             lines.append(f"  [{time_str}]  {text}")
-        lines.append("  " + "-" * 40)
+        lines.append("  " + "-" *40)
 
         return {**state, "output": "\n".join(lines)}
 

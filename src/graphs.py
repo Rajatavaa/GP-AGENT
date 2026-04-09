@@ -1,9 +1,9 @@
 from langgraph.graph import StateGraph, END, START
 from typing import TypedDict
 
-from .agents import general_agent_node
+from .agents import general_agent_node, Slack_work, Email_work
 from .router import router, should_compose
-from .agents import Slack_work, Email_work, _llm_compose_message
+from .utils import _llm_compose_message
 from .tools.email_tool import email_tools
 from .tools.slack_tool import slack_tools
 
