@@ -68,6 +68,7 @@ def build_graph(general_agent, llm):
         {
             "email": "email_send_email",
             "slack": "slack_send_message",
+            "general": "general_chat",
         },
     )
 

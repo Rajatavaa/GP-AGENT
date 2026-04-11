@@ -4,7 +4,7 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage
 from rich.markdown import Markdown
 
-from .utils import _confirm_message, _extract_sender_name
+from .utils import _confirm_message, _extract_sender_name, _strip_think_tags, _generate_subject
 from .display import (
     console,
     create_channel_table,
@@ -32,6 +32,7 @@ def general_agent_node(state, agent):
     )
 
     output = result.content if hasattr(result, "content") else str(result)
+    output = _strip_think_tags(output)
     return {**state, "output": Markdown(output)}
 
 
@@ -61,7 +62,8 @@ class Slack_work:
             message = composed
         else:
             saying_match = re.search(
-                r"saying\s+(.+)", state.get("input", ""), re.IGNORECASE
+                r"saying\s+(.+?)(?:\s+in\s+\d+\s+words?)?\s*$",
+                state.get("input", ""), re.IGNORECASE,
             )
             message = (
                 saying_match.group(1).strip()
@@ -144,34 +146,33 @@ class Slack_work:
 
 class Email_work:
     def handle_email_send(state, tools, llm):
-        email_match = re.search(r"[\w\.-]+@[\w\.-]+", state.get("input", ""))
+        user_input = state.get("input", "")
+        email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
         to_email = email_match.group(0) if email_match else ""
-
         composed = state.get("composed_message")
         if composed:
             body = composed
         else:
+            # Extract message after "saying", but strip trailing instructions like "in 50 words"
             saying_match = re.search(
-                r"saying\s+(.+)", state.get("input", ""), re.IGNORECASE
+                r"saying\s+(.+?)(?:\s+in\s+\d+\s+words?)?\s*$",
+                user_input, re.IGNORECASE,
             )
             body = (
                 saying_match.group(1).strip()
                 if saying_match
-                else state.get("input", "")
+                else user_input
             )
 
         subject_match = re.search(
             r"(?:about|regarding)\s+(.+?)(?:\s+saying|\s*$)",
-            state.get("input", ""),
+            user_input,
             re.IGNORECASE,
         )
-        subject = (
-            subject_match.group(1).strip()
-            if subject_match
-            else " ".join(body.split()[:6])
-            if body
-            else "Email"
-        )
+        if subject_match:
+            subject = subject_match.group(1).strip()
+        else:
+            subject = _generate_subject(body, llm)
 
         send_tool = None
         for tool in tools:
@@ -191,7 +192,7 @@ class Email_work:
             return {**state, "output": "Email cancelled."}
 
         if confirmed != body and not subject_match:
-            subject = " ".join(confirmed.split()[:6]) if confirmed else "Email"
+            subject = _generate_subject(confirmed, llm)
 
         extracted_name = _extract_sender_name(confirmed)
         if extracted_name:
@@ -207,7 +208,7 @@ class Email_work:
             **state,
             "output": create_sent_panel(
                 "Email Sent",
-                f"To: {to_email}\nSubject: {subject}",
+                f"To: {to_email}\nSubject: {subject}\n\n{confirmed}",
             ),
         }
 

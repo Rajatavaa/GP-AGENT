@@ -5,6 +5,15 @@ from prompt_toolkit import prompt as pt_prompt
 from .display import console
 
 
+def _strip_think_tags(text):
+    """Remove <think>...</think> blocks (including content) from LLM output."""
+    # Remove closed think blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Remove unclosed think blocks (LLM output cut off or missing closing tag)
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def _confirm_message(message, llm=None):
     console.print("\n  [bold]Preview:[/bold]")
     for line in message.split("\n"):
@@ -32,7 +41,8 @@ def _confirm_message(message, llm=None):
                 )
                 result = llm.invoke(prompt)
                 content = result.content if hasattr(result, "content") else str(result)
-                message = content.replace("\u201c", "").replace("\u201d", "").strip()
+                content = _strip_think_tags(content)
+                message = content.replace("\u201c", '"').replace("\u201d", '"').strip()
             else:
                 message = edits
             console.print("\n  [bold]Updated:[/bold]")
@@ -43,45 +53,52 @@ def _confirm_message(message, llm=None):
             console.print("  [dim]Enter Y, E, or C[/dim]")
 
 
-def _needs_llm_compose(user_input):
-    keywords = [
-        "write",
-        "compose",
-        "draft",
-        "create",
-        "generate",
-        "professional",
-        "formal",
-        "word",
-        "on your own",
-        "add a line",
-        "make it",
-    ]
-    user_lower = user_input.lower()
-    return any(k in user_lower for k in keywords)
-
-
 def _llm_compose_message(state, llm):
     user_input = state.get("input", "")
     prompt = (
-        "You are a message writer. Based on the user's request, write ONLY the message content."
-        "Do not include any explanation, prefix, reasoning, or formatting. Just the message itself.\n\n"
-        "Please do not include the subject in the email body"
+        "You are a message writer. Write ONLY the message body.\n\n"
+        "RULES:\n"
+        "- Do NOT include a subject line (no 'Subject:' prefix)\n"
+        "- Do NOT include a sign-off like 'Best, [Your Name]' or 'Regards, [Your Name]'\n"
+        "- Do NOT repeat the user's instructions in the message\n"
+        "- If the user says 'in X words', that means write the message using approximately X words. "
+        "Do NOT mention the word count in the message itself.\n"
+        "- Output ONLY the message body text, nothing else.\n\n"
         f"User request: {user_input}"
     )
     result = llm.invoke(prompt)
     content = result.content if hasattr(result, "content") else str(result)
-    content = re.sub(r"\u201c.*?\u201d", "", content, flags=re.DOTALL)
-    content = content.replace("\u201c", "").replace("\u201d", "").strip()
+    content = _strip_think_tags(content)
+    # Remove subject line if LLM still includes one
+    content = re.sub(r"^Subject:.*\n*", "", content, flags=re.IGNORECASE).strip()
+    # Remove [Your Name] placeholders and sign-offs with them
+    content = re.sub(
+        r"(?:Best|Regards|Sincerely|Thanks|Cheers),?\s*\n*\s*\[.*?\]",
+        "", content, flags=re.IGNORECASE
+    ).strip()
+    # Replace smart quotes with regular quotes (don't delete content between them)
+    content = content.replace("\u201c", '"').replace("\u201d", '"').strip()
     return {**state, "composed_message": content}
 
 
-def _extract_name_from_email(email):
-    if not email:
-        return None
-    name_part = email.split("@")[0]
-    name_part = name_part.replace(".", " ").replace("_", " ")
-    return name_part.strip()
+def _generate_subject(body, llm):
+    """Use the LLM to generate a short email subject from the body."""
+    prompt = (
+        "Write a short email subject line (max 6 words) for this email body. "
+        "Output ONLY the subject line, nothing else. No quotes, no 'Subject:' prefix.\n\n"
+        f"Email body: {body}"
+    )
+    try:
+        result = llm.invoke(prompt)
+        content = result.content if hasattr(result, "content") else str(result)
+        content = _strip_think_tags(content)
+        content = re.sub(r"^Subject:\s*", "", content, flags=re.IGNORECASE).strip()
+        content = content.strip('"\'')
+        if content:
+            return content
+    except Exception:
+        pass
+    return "Email"
 
 
 def _extract_sender_name(body):
