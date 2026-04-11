@@ -4,7 +4,14 @@ from datetime import datetime
 from langchain_core.messages import HumanMessage
 from rich.markdown import Markdown
 
-from .utils import _confirm_message, _extract_sender_name, _strip_think_tags, _generate_subject
+from .tools.email_tool import send_html_email
+from .config import get_sender_name
+from .utils import (
+    _confirm_message,
+    _strip_think_tags,
+    _generate_subject,
+    email_structure,
+)
 from .display import (
     console,
     create_channel_table,
@@ -63,7 +70,8 @@ class Slack_work:
         else:
             saying_match = re.search(
                 r"saying\s+(.+?)(?:\s+in\s+\d+\s+words?)?\s*$",
-                state.get("input", ""), re.IGNORECASE,
+                state.get("input", ""),
+                re.IGNORECASE,
             )
             message = (
                 saying_match.group(1).strip()
@@ -146,23 +154,51 @@ class Slack_work:
 
 class Email_work:
     def handle_email_send(state, tools, llm):
+        from prompt_toolkit import prompt as pt_prompt
+
         user_input = state.get("input", "")
         email_match = re.search(r"[\w\.-]+@[\w\.-]+", user_input)
         to_email = email_match.group(0) if email_match else ""
+
+        console.print("\n  [bold]Who is this email to?[/bold] (recipient's name)")
+        receiver_name = state.get("receiver_name", "")
+        if not receiver_name:
+            try:
+                receiver_name = pt_prompt("  Name > ").strip()
+            except (KeyboardInterrupt, EOFError):
+                receiver_name = ""
+
+        sender_name = get_sender_name()
+
         composed = state.get("composed_message")
         if composed:
-            body = composed
+            formatted_body = composed
+            if receiver_name and not re.search(
+                rf"^(?:Hi|Hello|Dear|Hey)\s+{re.escape(receiver_name)}",
+                formatted_body,
+                re.IGNORECASE,
+            ):
+                formatted_body = f"Hi {receiver_name},\n\n{formatted_body}"
+            if sender_name and not re.search(
+                rf"(?:Best|Regards|Sincerely|Thanks),?\s*\n?\s*{re.escape(sender_name)}",
+                formatted_body,
+                re.IGNORECASE,
+            ):
+                formatted_body = f"{formatted_body}\n\nBest,\n{sender_name}"
+            formatted_body = email_structure(formatted_body)
         else:
-            # Extract message after "saying", but strip trailing instructions like "in 50 words"
             saying_match = re.search(
                 r"saying\s+(.+?)(?:\s+in\s+\d+\s+words?)?\s*$",
-                user_input, re.IGNORECASE,
+                user_input,
+                re.IGNORECASE,
             )
-            body = (
-                saying_match.group(1).strip()
-                if saying_match
-                else user_input
+            formatted_body = (
+                saying_match.group(1).strip() if saying_match else user_input
             )
+            if receiver_name:
+                formatted_body = f"Hi {receiver_name},\n\n{formatted_body}"
+            if sender_name:
+                formatted_body = f"{formatted_body}\n\nBest,\n{sender_name}"
 
         subject_match = re.search(
             r"(?:about|regarding)\s+(.+?)(?:\s+saying|\s*$)",
@@ -172,38 +208,22 @@ class Email_work:
         if subject_match:
             subject = subject_match.group(1).strip()
         else:
-            subject = _generate_subject(body, llm)
+            subject = _generate_subject(formatted_body, llm)
 
-        send_tool = None
-        for tool in tools:
-            if tool.name == "send_gmail_message":
-                send_tool = tool
-                break
-
-        if not send_tool:
-            return {**state, "output": "Send email tool not found"}
         if not to_email:
             return {**state, "output": "Could not find recipient email address"}
 
         console.print(f"\n  [bold]To:[/bold] {to_email}")
         console.print(f"  [bold]Subject:[/bold] {subject}")
-        confirmed = _confirm_message(body, llm)
+        confirmed = _confirm_message(formatted_body, llm)
         if not confirmed:
             return {**state, "output": "Email cancelled."}
 
-        if confirmed != body and not subject_match:
+        if confirmed != formatted_body and not subject_match:
             subject = _generate_subject(confirmed, llm)
 
-        extracted_name = _extract_sender_name(confirmed)
-        if extracted_name:
-            confirmed = re.sub(
-                rf"(?:Best|Regards|Sincerely|Thanks),\s*\n?.*{re.escape(extracted_name)}",
-                "",
-                confirmed,
-                flags=re.IGNORECASE | re.DOTALL,
-            ).strip()
-
-        send_tool.invoke({"to": to_email, "subject": subject, "message": confirmed})
+        confirmed = email_structure(confirmed)
+        send_html_email(to_email, subject, confirmed)
         return {
             **state,
             "output": create_sent_panel(

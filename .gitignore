@@ -9,8 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
-#Files
+#files
 .env
+config.json
 **/token.json
 **/credentials.json
 HOW-TO-RUN.md

@@ -54,31 +54,45 @@ def _confirm_message(message, llm=None):
 
 
 def _llm_compose_message(state, llm):
+    from .config import get_sender_name
+    import re as _re
+
     user_input = state.get("input", "")
+    receiver_name = state.get("receiver_name", "")
+    sender_name = get_sender_name()
+
+    is_email = bool(_re.search(r"email|mail|@", user_input.lower()))
+
+    if is_email and not receiver_name:
+        console.print("\n  [bold]Who is this email to?[/bold] (recipient's name)")
+        try:
+            receiver_name = pt_prompt("  Name > ").strip()
+        except (KeyboardInterrupt, EOFError):
+            receiver_name = ""
+
+    name_instruction = ""
+    if receiver_name:
+        name_instruction += f"\n- Address the recipient by name: {receiver_name}. Start with a salutation like 'Hi {receiver_name},' or 'Dear {receiver_name},'"
+    if sender_name:
+        name_instruction += f"\n- Sign off with your name: {sender_name}. End with something like 'Best, {sender_name}' or 'Regards, {sender_name}'"
+
     prompt = (
         "You are a message writer. Write ONLY the message body.\n\n"
         "RULES:\n"
         "- Do NOT include a subject line (no 'Subject:' prefix)\n"
-        "- Do NOT include a sign-off like 'Best, [Your Name]' or 'Regards, [Your Name]'\n"
         "- Do NOT repeat the user's instructions in the message\n"
         "- If the user says 'in X words', that means write the message using approximately X words. "
         "Do NOT mention the word count in the message itself.\n"
-        "- Output ONLY the message body text, nothing else.\n\n"
+        "- Output ONLY the message body text, nothing else.\n"
+        f"{name_instruction}\n\n"
         f"User request: {user_input}"
     )
     result = llm.invoke(prompt)
     content = result.content if hasattr(result, "content") else str(result)
     content = _strip_think_tags(content)
-    # Remove subject line if LLM still includes one
     content = re.sub(r"^Subject:.*\n*", "", content, flags=re.IGNORECASE).strip()
-    # Remove [Your Name] placeholders and sign-offs with them
-    content = re.sub(
-        r"(?:Best|Regards|Sincerely|Thanks|Cheers),?\s*\n*\s*\[.*?\]",
-        "", content, flags=re.IGNORECASE
-    ).strip()
-    # Replace smart quotes with regular quotes (don't delete content between them)
     content = content.replace("\u201c", '"').replace("\u201d", '"').strip()
-    return {**state, "composed_message": content}
+    return {**state, "composed_message": content, "receiver_name": receiver_name}
 
 
 def _generate_subject(body, llm):
@@ -93,7 +107,7 @@ def _generate_subject(body, llm):
         content = result.content if hasattr(result, "content") else str(result)
         content = _strip_think_tags(content)
         content = re.sub(r"^Subject:\s*", "", content, flags=re.IGNORECASE).strip()
-        content = content.strip('"\'')
+        content = content.strip("\"'")
         if content:
             return content
     except Exception:
@@ -101,17 +115,19 @@ def _generate_subject(body, llm):
     return "Email"
 
 
-def _extract_sender_name(body):
-    patterns = [
-        r"(?:Best|Regards|Sincerely|Thanks),\s*\n?(.+?)(?:\n|$)",
-        r"(?:Best|Regards|Sincerely|Thanks),\s*\n?\[\s*Your\s+Name\s*\]",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
-        if match:
-            name = match.group(1).strip()
-            if name and name != "Your Name":
-                return name
-
-    return None
+def email_structure(body):
+    """Insert proper newlines around salutation, closing, and from lines."""
+    body = re.sub(r"((?:Hi|Hello|Dear|Hey)\s+[^,.!?\n]+[,.])\s*", r"\1\n\n", body)
+    body = re.sub(
+        r"\s*\n?\s*((?:Best|Regards|Sincerely|Thanks|Warm regards|Cheers)\s*,)",
+        r"\n\n\1",
+        body,
+    )
+    body = re.sub(
+        r"((?:Best|Regards|Sincerely|Thanks|Warm regards|Cheers),)\s+([A-Z][\w\s]*?)\s*$",
+        r"\1\n\2",
+        body,
+        flags=re.MULTILINE,
+    )
+    body = re.sub(r"\s*\n?(From:)", r"\n\n\1", body)
+    return body

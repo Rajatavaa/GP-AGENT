@@ -12,6 +12,8 @@ class Agentstate(TypedDict):
     input: str
     output: Any
     composed_message: str
+    receiver_name: str
+    sender_name: str
 
 
 def build_graph(general_agent, llm):

@@ -11,6 +11,7 @@ from prompt_toolkit.completion import WordCompleter
 
 from src.graphs import build_graph
 from src.agents import start_agent
+from src.config import get_sender_name, set_sender_name
 from src.display import console, show_banner, show_help, show_session_info
 
 load_dotenv()
@@ -30,6 +31,27 @@ COMPLETER = WordCompleter(COMMANDS, ignore_case=True, sentence=True)
 
 
 def start():
+    history_file = os.path.expanduser("~/.gp_agent_history")
+    session = PromptSession(
+        history=FileHistory(history_file),
+        completer=COMPLETER,
+    )
+
+    sender_name = get_sender_name()
+    if not sender_name:
+        console.print("\n  [bold cyan]First-time setup:[/] What is your name?")
+        try:
+            sender_name = session.prompt("  Your name > ").strip()
+        except (KeyboardInterrupt, EOFError):
+            sender_name = ""
+        if sender_name:
+            set_sender_name(sender_name)
+            console.print(f"  [green]Saved!.[/]\n")
+        else:
+            console.print(
+                "  [dim]No name saved. You can set it later via config.json[/]\n"
+            )
+
     console.print("  [dim]Connecting to LLM...[/]", end=" ")
     try:
         base_url = os.getenv("LLM_BASE_URL", "http://localhost:8000/v1")
@@ -50,12 +72,6 @@ def start():
     graph = build_graph(general_agent, llm).compile()
 
     show_banner(model)
-
-    history_file = os.path.expanduser("~/.gp_agent_history")
-    session = PromptSession(
-        history=FileHistory(history_file),
-        completer=COMPLETER,
-    )
 
     start_time = time.time()
 
