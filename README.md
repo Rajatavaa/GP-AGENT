@@ -7,13 +7,34 @@ A multi-agent system built with **LangGraph** and **LangChain** that intelligent
 ## Architecture
 
 ```
-User Input → Router (intent classification)
-                 ├── "email" → Email Agent (Gmail: send, search, read)
-                 ├── "slack" → Slack Agent (send, read, list channels)
-                 └── "general" → General Agent (plain LLM response)
+User Input (CLI)
+    │
+    ▼
+  Router ── keyword match (fast path) ──┐
+    │                                    │
+    ▼ (ambiguous)                        │
+  LLM classification                     │
+    │                                    │
+    ├── compose signals? ─► LLM Compose ─┤
+    │       ("write", "professional",    │
+    │        "in 50 words", etc.)        │
+    │                                    │
+    ▼                                    ▼
+  ┌──────────────────────────────────────────┐
+  │  "email"  → Email Agent (send / read)    │
+  │  "slack"  → Slack Agent (send / read /   │
+  │              list channels)              │
+  │  "general"→ General Chat (plain LLM)     │
+  └──────────────────────────────────────────┘
+    │
+    ▼
+  Preview & Confirm (send / edit / cancel)
+    │
+    ▼
+  Output (Rich formatted panel)
 ```
 
-The **Router** uses keyword matching first (fast path), then falls back to LLM classification for ambiguous inputs. Each agent executes domain-specific logic with integrated tools and returns the result.
+The **Router** uses keyword matching first (fast path), then falls back to LLM classification for ambiguous inputs. If compose signals are detected (e.g. "write a professional 50 word message"), the LLM drafts the message before routing to the target agent. All outgoing messages go through an interactive preview where you can **send**, **edit**, or **cancel**.
 
 ---
 
@@ -21,13 +42,19 @@ The **Router** uses keyword matching first (fast path), then falls back to LLM c
 
 ```
 GP-AGENT/
-├── main.py                  # CLI entry point
+├── main.py                  # Interactive CLI entry point
 ├── pyproject.toml           # Project metadata and dependencies
+├── config.json              # User config (sender name, auto-created)
 ├── .env.example             # Environment variable template
+├── HOW-TO-RUN.md            # Quick-start guide
 └── src/
     ├── __init__.py
-    ├── agents.py            # Router, email/slack/general agent logic
+    ├── agents.py            # Email, Slack, and general chat agent logic
     ├── graphs.py            # LangGraph state graph definition
+    ├── router.py            # Intent classification (keyword + LLM fallback)
+    ├── config.py            # Config file management (sender name)
+    ├── utils.py             # Message composition, editing, subject generation
+    ├── display.py           # Rich console output (banners, tables, panels)
     └── tools/
         ├── email_tool.py    # Gmail API tools (Send, Search, Get)
         └── slack_tool.py    # Slack API tools (Send, GetChannel, GetMessage)
@@ -127,7 +154,18 @@ Start the LLM server, then run:
 python main.py
 ```
 
-This launches an interactive CLI. Type `help` to see available commands.
+On first run, you'll be prompted for your name (used in email sign-offs). This is saved to `config.json`.
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/info` | Display session info (model, uptime) |
+| `/clear` | Clear the terminal |
+| `/quit`, `/exit` | Exit the application |
+
+Multi-line input is supported — end a line with `\` to continue on the next line. Command history is saved across sessions.
 
 ### Examples
 
@@ -139,6 +177,7 @@ This launches an interactive CLI. Type `help` to see available commands.
 > send an email to john@example.com saying the meeting is rescheduled
 > write a formal email to jane@example.com about project update
 > read my emails from boss@company.com
+> what is machine learning?
 ```
 
 When sending messages, you'll get a preview with options to **send**, **edit**, or **cancel** before anything is sent.
@@ -150,5 +189,6 @@ When sending messages, you'll get a preview with options to **send**, **edit**, 
 - **"Cannot connect to LLM server"** — Your local LLM server isn't running. Start it before running the agent.
 - **Gmail auth errors** — Ensure `credentials.json` exists. Delete `token.json` to re-authenticate.
 - **"Slack token invalid"** — Check your `.env` file has a valid `SLACK_USER_TOKEN`.
-- **Wrong routing** — Include "email" or "slack" in your query for reliable routing. Ambiguous queries depend on your local model's classification accuracy.
+- **Wrong routing** — Include "email" or "slack" in your query for reliable routing. Ambiguous queries fall back to LLM classification, whose accuracy depends on your local model.
 - **Email fields wrong** — Use `saying` before the body, and `about`/`regarding`/`on` before the subject for best extraction.
+- **Name not showing in emails** — Edit `config.json` in the project root, or delete it to be prompted again on next run.
