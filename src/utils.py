@@ -71,10 +71,13 @@ def _llm_compose_message(state, llm):
             receiver_name = ""
 
     name_instruction = ""
-    if receiver_name:
-        name_instruction += f"\n- Address the recipient by name: {receiver_name}. Start with a salutation like 'Hi {receiver_name},' or 'Dear {receiver_name},'"
-    if sender_name:
-        name_instruction += f"\n- Sign off with your name: {sender_name}. End with something like 'Best, {sender_name}' or 'Regards, {sender_name}'"
+    if is_email:
+        if receiver_name:
+            name_instruction += f"\n- Address the recipient by name: {receiver_name}. Start with a salutation like 'Hi {receiver_name},' or 'Dear {receiver_name},'"
+        if sender_name:
+            name_instruction += f"\n- Sign off with your name: {sender_name}. End with something like 'Best, {sender_name}' or 'Regards, {sender_name}'"
+    else:
+        name_instruction += "\n- Do NOT include any salutation (no 'Hi Name,') or sign-off (no 'Thanks', 'Best', 'Regards', etc.). Write ONLY the core message."
 
     prompt = (
         "You are a message writer. Write ONLY the message body.\n\n"
