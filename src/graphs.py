@@ -14,6 +14,7 @@ class Agentstate(TypedDict):
     composed_message: str
     receiver_name: str
     sender_name: str
+    attach_file: str
 
 
 def build_graph(general_agent, llm):

@@ -5,9 +5,11 @@ from langchain_core.messages import HumanMessage
 from rich.markdown import Markdown
 
 from .tools.email_tool import send_html_email
+from .tools.slack_tool import slack_upload_file
 from .config import get_sender_name
 from .utils import (
     _confirm_message,
+    _prompt_attach_file,
     _strip_think_tags,
     _generate_subject,
     email_structure,
@@ -91,6 +93,18 @@ class Slack_work:
         confirmed = _confirm_message(message, llm)
         if not confirmed:
             return {**state, "output": "Message cancelled."}
+
+        attach_path = _prompt_attach_file()
+
+        if attach_path:
+            upload_result = slack_upload_file(channel, attach_path, confirmed)
+            return {
+                **state,
+                "output": create_sent_panel(
+                    f"Message + File sent to #{channel}",
+                    f"{confirmed}\n\n{upload_result}",
+                ),
+            }
 
         send_tool.invoke({"message": confirmed, "channel": channel})
         return {
@@ -223,12 +237,16 @@ class Email_work:
             subject = _generate_subject(confirmed, llm)
 
         confirmed = email_structure(confirmed)
-        send_html_email(to_email, subject, confirmed)
+
+        attach_path = _prompt_attach_file()
+
+        send_html_email(to_email, subject, confirmed, attachment_path=attach_path)
+        attach_info = f"\nAttachment: {attach_path}" if attach_path else ""
         return {
             **state,
             "output": create_sent_panel(
                 "Email Sent",
-                f"To: {to_email}\nSubject: {subject}\n\n{confirmed}",
+                f"To: {to_email}\nSubject: {subject}{attach_info}\n\n{confirmed}",
             ),
         }
 

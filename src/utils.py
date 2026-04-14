@@ -1,7 +1,9 @@
+import os
 import re
 
 from prompt_toolkit import prompt as pt_prompt
 
+from .config import validate_file_path
 from .display import console
 
 
@@ -134,3 +136,33 @@ def email_structure(body):
     )
     body = re.sub(r"\s*\n?(From:)", r"\n\n\1", body)
     return body
+
+
+def _prompt_attach_file():
+    try:
+        console.print("\n  [bold cyan]--- Attach a file? ---[/bold cyan]")
+        console.print("  [dim]Y = attach a file, N or Enter = skip[/dim]")
+        choice = pt_prompt("  Attach? [Y/N] > ").strip().lower()
+        if choice not in ("y", "yes"):
+            console.print("  [dim]No attachment. Sending without file.[/]")
+            return None
+
+        while True:
+            console.print("  [bold]Enter file path[/bold] (or press Enter to skip):")
+            path = pt_prompt("  File path > ").strip()
+            if not path:
+                console.print("  [dim]No path entered. Sending without attachment.[/]")
+                return None
+
+            valid, result = validate_file_path(path)
+            if valid:
+                console.print(f"  [green]File attached: {result}[/]")
+                return result
+            else:
+                console.print(f"  [bold red]{result}[/]")
+                console.print(
+                    "  [dim]Enter a different path, or press Enter to skip.[/dim]"
+                )
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n  [dim]Skipping attachment.[/]")
+        return None
