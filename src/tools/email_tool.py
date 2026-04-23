@@ -1,6 +1,7 @@
 import base64
 import mimetypes
 import os
+from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -29,16 +30,16 @@ def send_html_email(
         alt.attach(MIMEText(html_body, "html"))
         msg.attach(alt)
 
-        filepath = os.path.expanduser(attachment_path)
-        filename = os.path.basename(filepath)
-        mime_type, _ = mimetypes.guess_type(filepath)
+        mime_type, _ = mimetypes.guess_type(attachment_path)
         if mime_type is None:
             mime_type = "application/octet-stream"
         maintype, subtype = mime_type.split("/", 1)
 
-        with open(filepath, "rb") as f:
+        with open(attachment_path, "rb") as f:
             attachment = MIMEBase(maintype, subtype)
             attachment.set_payload(f.read())
+        encoders.encode_base64(attachment)
+        filename = os.path.basename(attachment_path)
         attachment.add_header("Content-Disposition", "attachment", filename=filename)
         msg.attach(attachment)
     else:

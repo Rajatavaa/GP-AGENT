@@ -238,7 +238,12 @@ class Email_work:
 
         confirmed = email_structure(confirmed)
 
-        attach_path = _prompt_attach_file()
+        attach_keywords = re.search(
+            r"\b(attach|attachment|with file|include file|add file)\b",
+            user_input,
+            re.IGNORECASE,
+        )
+        attach_path = _prompt_attach_file(auto_attach=bool(attach_keywords))
 
         send_html_email(to_email, subject, confirmed, attachment_path=attach_path)
         attach_info = f"\nAttachment: {attach_path}" if attach_path else ""

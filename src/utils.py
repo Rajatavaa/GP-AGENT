@@ -1,9 +1,10 @@
 import os
 import re
+import tkinter as tk
+from tkinter import filedialog
 
 from prompt_toolkit import prompt as pt_prompt
 
-from .config import validate_file_path
 from .display import console
 
 
@@ -138,31 +139,41 @@ def email_structure(body):
     return body
 
 
-def _prompt_attach_file():
-    try:
-        console.print("\n  [bold cyan]--- Attach a file? ---[/bold cyan]")
-        console.print("  [dim]Y = attach a file, N or Enter = skip[/dim]")
-        choice = pt_prompt("  Attach? [Y/N] > ").strip().lower()
-        if choice not in ("y", "yes"):
-            console.print("  [dim]No attachment. Sending without file.[/]")
-            return None
+def _prompt_attach_file(auto_attach=False):
+    """Prompt user to attach a file via GUI picker.
 
-        while True:
-            console.print("  [bold]Enter file path[/bold] (or press Enter to skip):")
-            path = pt_prompt("  File path > ").strip()
-            if not path:
-                console.print("  [dim]No path entered. Sending without attachment.[/]")
+    Args:
+        auto_attach: If True, skip the Y/N prompt and open the file picker
+                     immediately. If False, ask the user first.
+    Returns:
+        The selected file path, or None if skipped/cancelled.
+    """
+    try:
+        if not auto_attach:
+            console.print("\n  [bold cyan]--- Attach a file? ---[/bold cyan]")
+            console.print("  [dim]Y = attach a file, N or Enter = skip[/dim]")
+            choice = pt_prompt("  Attach? [Y/N] > ").strip().lower()
+            if choice not in ("y", "yes"):
+                console.print("  [dim]No attachment. Sending without file.[/]")
                 return None
 
-            valid, result = validate_file_path(path)
-            if valid:
-                console.print(f"  [green]File attached: {result}[/]")
-                return result
-            else:
-                console.print(f"  [bold red]{result}[/]")
-                console.print(
-                    "  [dim]Enter a different path, or press Enter to skip.[/dim]"
-                )
+        # Hide the root tkinter window
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        filepath = filedialog.askopenfilename(
+            title="Select a file to attach",
+            filetypes=[("All files", "*.*")],
+        )
+        root.destroy()
+
+        if not filepath:
+            console.print("  [dim]No file selected. Sending without attachment.[/]")
+            return None
+
+        console.print(f"  [green]File attached: {os.path.basename(filepath)}[/]")
+        return filepath
     except (KeyboardInterrupt, EOFError):
         console.print("\n  [dim]Skipping attachment.[/]")
         return None
